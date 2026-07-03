@@ -1,0 +1,71 @@
+# ── Web framework ─────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# ── Database ──────────────────────────────────────────────────────────────
+sqlalchemy==2.0.30
+alembic==1.13.1
+asyncpg==0.29.0          # async postgres driver
+psycopg2-binary==2.9.9   # sync fallback
+supabase==2.4.3          # Supabase client (free tier)
+
+# ── Graph DB ──────────────────────────────────────────────────────────────
+neo4j==5.20.0            # Neo4j AuraDB (free tier)
+
+# ── Cache ─────────────────────────────────────────────────────────────────
+redis==5.0.4
+upstash-redis==1.1.0
+
+# ── Vector DB ─────────────────────────────────────────────────────────────
+qdrant-client==1.9.1
+
+# ── Auth & Security ───────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# ── HTTP clients ──────────────────────────────────────────────────────────
+httpx==0.27.0
+aiohttp==3.9.5
+requests==2.31.0
+tenacity==8.3.0          # retry logic
+
+# ── LLM / AI ─────────────────────────────────────────────────────────────
+groq==0.8.0              # Groq API (free)
+google-generativeai==0.5.4  # Gemini (free tier)
+langchain==0.2.1
+langgraph==0.1.1
+langchain-groq==0.1.3
+sentence-transformers==3.0.0  # local embeddings (free)
+
+# ── NLP ───────────────────────────────────────────────────────────────────
+spacy==3.7.4             # NER (download en_core_web_sm free)
+transformers==4.41.1
+torch==2.3.0             # CPU only for free tier servers
+
+# ── Data processing ───────────────────────────────────────────────────────
+pandas==2.2.2
+numpy==1.26.4
+scipy==1.13.0
+
+# ── Scheduling ────────────────────────────────────────────────────────────
+celery==5.4.0
+apscheduler==3.10.4
+
+# ── Scraping ──────────────────────────────────────────────────────────────
+beautifulsoup4==4.12.3
+playwright==1.44.0       # headless browser (free)
+feedparser==6.0.11       # RSS feeds
+
+# ── Monitoring ────────────────────────────────────────────────────────────
+sentry-sdk[fastapi]==2.3.1
+prometheus-fastapi-instrumentator==7.0.0
+opentelemetry-sdk==1.24.0
+
+# ── Testing ───────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.7
+httpx==0.27.0            # test client

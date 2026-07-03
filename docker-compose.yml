@@ -1,0 +1,106 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL (local dev fallback if not using Supabase) ──────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sarwagya
+      POSTGRES_PASSWORD: sarwagya_dev
+      POSTGRES_DB: sarwagya
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sarwagya"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (local dev fallback if not using Upstash) ───────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+
+  # ── Qdrant vector DB ──────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── Airflow Scheduler ─────────────────────────────────────────────────────
+  airflow-webserver:
+    image: apache/airflow:2.9.1-python3.11
+    command: webserver
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./infra/airflow/.env
+    volumes:
+      - ./infra/airflow/dags:/opt/airflow/dags
+      - ./infra/airflow/plugins:/opt/airflow/plugins
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.1-python3.11
+    command: scheduler
+    env_file:
+      - ./infra/airflow/.env
+    volumes:
+      - ./infra/airflow/dags:/opt/airflow/dags
+      - ./infra/airflow/plugins:/opt/airflow/plugins
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      - postgres
+      - redis
+
+  # ── Nginx reverse proxy (local dev) ──────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx/dev.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+  airflow_logs:

@@ -1,0 +1,41 @@
+# ── Environment files (NEVER commit these) ────────────────────────────────
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+infra/airflow/.env
+
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.pyc
+
+# ── Node / Next.js ─────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+build/
+.turbo/
+
+# ── OS / Editor ─────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ── Logs ────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Airflow ─────────────────────────────────────────────────────────────
+infra/airflow/logs/
+infra/airflow/plugins/__pycache__/
+
+# ── Database dumps / secrets ────────────────────────────────────────────
+*.db
+*.sqlite3
+secrets/
