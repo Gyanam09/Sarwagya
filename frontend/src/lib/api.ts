@@ -1,11 +1,12 @@
 /**
- * lib/api.ts — Centralized API client for Sarwagya backend
- * Handles auth token injection, refresh, and error normalization.
+ * lib/api.ts — Sarwagya API client
+ * Uses localStorage for token persistence (survives tab close/refresh)
  */
 import axios, { AxiosError, AxiosInstance } from "axios";
-import { getSupabaseClient } from "./supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const ACCESS_KEY = "sarwagya_access_token";
+const REFRESH_KEY = "sarwagya_refresh_token";
 
 class ApiClient {
   private client: AxiosInstance;
@@ -15,9 +16,15 @@ class ApiClient {
   constructor() {
     this.client = axios.create({
       baseURL: API_URL,
-      timeout: 30000,
+      timeout: 60000,
       headers: { "Content-Type": "application/json" },
     });
+
+    // Restore tokens from localStorage on init
+    if (typeof window !== "undefined") {
+      this.accessToken = localStorage.getItem(ACCESS_KEY);
+      this.refreshToken = localStorage.getItem(REFRESH_KEY);
+    }
 
     this.client.interceptors.request.use((config) => {
       if (this.accessToken) {
@@ -27,47 +34,35 @@ class ApiClient {
     });
 
     this.client.interceptors.response.use(
-      (response) => response,
+      (r) => r,
       async (error: AxiosError) => {
         if (error.response?.status === 401 && this.refreshToken) {
           try {
-            const newTokens = await this.refreshAccessToken();
-            if (newTokens && error.config) {
-              error.config.headers.Authorization = `Bearer ${newTokens.access_token}`;
+            const res = await axios.post(`${API_URL}/auth/refresh`, {
+              refresh_token: this.refreshToken,
+            });
+            this.setTokens(res.data.access_token, res.data.refresh_token);
+            if (error.config) {
+              error.config.headers.Authorization = `Bearer ${res.data.access_token}`;
               return this.client.request(error.config);
             }
           } catch {
             this.clearTokens();
-            if (typeof window !== "undefined") {
-              window.location.href = "/auth/login";
-            }
+            if (typeof window !== "undefined") window.location.href = "/auth/login";
           }
         }
-        return Promise.reject(this.normalizeError(error));
+        const detail = (error.response?.data as any)?.detail;
+        return Promise.reject({ message: detail || error.message || "Unexpected error", status: error.response?.status });
       }
     );
-
-    // Restore tokens from sessionStorage on init (never localStorage for security)
-    if (typeof window !== "undefined") {
-      this.accessToken = sessionStorage.getItem("sarwagya_access_token");
-      this.refreshToken = sessionStorage.getItem("sarwagya_refresh_token");
-    }
   }
 
-  private normalizeError(error: AxiosError) {
-    const detail = (error.response?.data as any)?.detail;
-    return {
-      message: detail || error.message || "An unexpected error occurred",
-      status: error.response?.status,
-    };
-  }
-
-  setTokens(accessToken: string, refreshToken: string) {
-    this.accessToken = accessToken;
-    this.refreshToken = refreshToken;
+  setTokens(access: string, refresh: string) {
+    this.accessToken = access;
+    this.refreshToken = refresh;
     if (typeof window !== "undefined") {
-      sessionStorage.setItem("sarwagya_access_token", accessToken);
-      sessionStorage.setItem("sarwagya_refresh_token", refreshToken);
+      localStorage.setItem(ACCESS_KEY, access);
+      localStorage.setItem(REFRESH_KEY, refresh);
     }
   }
 
@@ -75,20 +70,17 @@ class ApiClient {
     this.accessToken = null;
     this.refreshToken = null;
     if (typeof window !== "undefined") {
-      sessionStorage.removeItem("sarwagya_access_token");
-      sessionStorage.removeItem("sarwagya_refresh_token");
+      localStorage.removeItem(ACCESS_KEY);
+      localStorage.removeItem(REFRESH_KEY);
     }
   }
 
-  private async refreshAccessToken() {
-    const res = await axios.post(`${API_URL}/auth/refresh`, {
-      refresh_token: this.refreshToken,
-    });
-    this.setTokens(res.data.access_token, res.data.refresh_token);
-    return res.data;
+  hasTokens(): boolean {
+    if (typeof window !== "undefined") {
+      return !!localStorage.getItem(ACCESS_KEY);
+    }
+    return !!this.accessToken;
   }
-
-  // ── Public API methods ──────────────────────────────────────────────
 
   async login(email: string, password: string) {
     const res = await this.client.post("/auth/login", { email, password });
@@ -103,11 +95,7 @@ class ApiClient {
   }
 
   async logout() {
-    try {
-      await this.client.post("/auth/logout");
-    } finally {
-      this.clearTokens();
-    }
+    try { await this.client.post("/auth/logout"); } finally { this.clearTokens(); }
   }
 
   async getMe() {
@@ -132,22 +120,17 @@ class ApiClient {
     return res.data;
   }
 
-  async getCountryNetwork(iso3: string, depth: number = 1) {
+  async getCountryNetwork(iso3: string, depth = 1) {
     const res = await this.client.get(`/graph/network/${iso3}`, { params: { depth } });
     return res.data;
   }
 
-  async getEvents(params?: {
-    event_type?: string;
-    min_severity?: number;
-    country?: string;
-    limit?: number;
-  }) {
+  async getEvents(params?: { event_type?: string; min_severity?: number; country?: string; limit?: number }) {
     const res = await this.client.get("/events", { params });
     return res.data;
   }
 
-  async getTrendingEvents(hours: number = 24) {
+  async getTrendingEvents(hours = 24) {
     const res = await this.client.get("/events/trending/now", { params: { hours } });
     return res.data;
   }
@@ -172,16 +155,39 @@ class ApiClient {
   }
 
   async generateBilateralBrief(countryAIso3: string, countryBIso3: string) {
-    const res = await this.client.post("/reports/bilateral-brief", {
-      country_a_iso3: countryAIso3,
-      country_b_iso3: countryBIso3,
-    });
+    const res = await this.client.post("/reports/bilateral-brief", { country_a_iso3: countryAIso3, country_b_iso3: countryBIso3 });
     return res.data;
   }
 
   async getBilateralTrade(isoA: string, isoB: string) {
     const res = await this.client.get(`/trade/${isoA}/${isoB}`);
     return res.data;
+  }
+
+  async intelSearch(query: string, contextCountries?: string[]) {
+    const res = await this.client.post("/search/intel", {
+      query,
+      context_countries: contextCountries ?? [],
+    });
+    return res.data as {
+      query: string;
+      answer: string;
+      key_points: string[];
+      relevant_events: Array<{
+        title: string;
+        event_type: string;
+        severity: number;
+        summary: string;
+        countries_involved: string[];
+        affected_sectors: string[];
+      }>;
+      countries_involved: string[];
+      sectors_affected: string[];
+      confidence: "HIGH" | "MEDIUM" | "LOW";
+      sources: string[];
+      query_type: string;
+      generated_at: string;
+    };
   }
 }
 
