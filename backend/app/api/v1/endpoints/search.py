@@ -55,6 +55,20 @@ class IntelQueryRequest(BaseModel):
     context_countries: Optional[List[str]] = None  # optional ISO3 list to focus on
 
 
+class ChartDataset(BaseModel):
+    label: str
+    values: List[float]
+    color: Optional[str] = None
+
+
+class ChartData(BaseModel):
+    type: str            # "bar" | "line" | "radar" | "comparison"
+    title: str
+    labels: List[str]
+    datasets: List[Dict[str, Any]]
+    unit: Optional[str] = None
+
+
 class IntelQueryResponse(BaseModel):
     query: str
     answer: str
@@ -66,6 +80,10 @@ class IntelQueryResponse(BaseModel):
     sources: List[str]
     query_type: str
     generated_at: str
+    chart_data: List[Dict[str, Any]]         # NEW: structured chart data
+    data_points: List[Dict[str, Any]]        # NEW: factual figures cited
+    country_profiles: List[Dict[str, Any]]   # NEW: enriched country data
+    severity_breakdown: Dict[str, int]       # NEW: event severity counts
 
 
 def build_context(query: str, events: List[Dict], focus_countries: Optional[List[str]] = None) -> str:
@@ -112,6 +130,37 @@ COUNTRY PROFILES:{country_ctx if country_ctx else " (general global context)"}
 USER QUERY: {query}"""
 
 
+CHART_SYSTEM_PROMPT = """
+You are Sarwagya, an elite geospatial intelligence analyst.
+Analyse country relationships, economic sectors, trade dependencies, geopolitical events, and strategic risks.
+Ground your answers in the provided event data and country profiles.
+
+Respond ONLY with a single JSON object with these EXACT keys:
+- answer (string, 2-3 paragraphs of analytical prose)
+- key_points (array of 3-5 short bullet strings)
+- countries_involved (array of ISO3 codes, e.g. ["USA","CHN"])
+- sectors_affected (array of sector name strings)
+- confidence ("HIGH" | "MEDIUM" | "LOW")
+- query_type ("COUNTRY_RELATIONS" | "ECONOMIC" | "MILITARY" | "TRADE" | "ENERGY" | "DIPLOMATIC" | "GENERAL")
+- data_points: array of factual figures supporting your answer, each with:
+    { "label": string, "value": string, "unit": string, "source": string }
+    Example: {"label":"India crude imports from Russia","value":"40","unit":"%","source":"IEA 2024"}
+  Include 3-6 real, specific data points relevant to the query.
+- chart_data: array of 1-3 chart objects. Each chart has:
+    { "type": "bar"|"line"|"radar"|"comparison",
+      "title": string,
+      "labels": [string],
+      "datasets": [{"label": string, "values": [number], "color": "#hexcolor"}],
+      "unit": string }
+  Generate charts that genuinely illustrate the answer — e.g.:
+  - A bar chart of countries' energy import dependency percentages
+  - A line chart of trade volume trend (3-5 years of estimated data)
+  - A radar chart of a country's geopolitical exposure across sectors
+  - A comparison table of GDP / military spend for involved nations
+  Use realistic estimated values grounded in public knowledge.
+"""
+
+
 async def call_groq_llm(prompt: str) -> str:
     """Call Groq LLM (llama3-70b) for fast inference."""
     try:
@@ -120,27 +169,11 @@ async def call_groq_llm(prompt: str) -> str:
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Sarwagya, an elite geospatial intelligence analyst. "
-                        "You analyse country relationships, economic sectors, trade dependencies, "
-                        "geopolitical events, and strategic risks with precision. "
-                        "Always ground your answers in the provided event data and country profiles. "
-                        "Be concise, analytical, and use specific data points. "
-                        "Format your response as a JSON object with these exact keys: "
-                        "answer (string, 2-3 paragraphs), "
-                        "key_points (array of 3-5 short strings), "
-                        "countries_involved (array of ISO3 codes), "
-                        "sectors_affected (array of sector strings), "
-                        "confidence (HIGH/MEDIUM/LOW), "
-                        "query_type (COUNTRY_RELATIONS/ECONOMIC/MILITARY/TRADE/ENERGY/DIPLOMATIC/GENERAL)."
-                    ),
-                },
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": CHART_SYSTEM_PROMPT},
+                {"role": "user",   "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=1200,
+            max_tokens=2000,
             response_format={"type": "json_object"},
         )
         return response.choices[0].message.content or "{}"
@@ -152,20 +185,12 @@ async def call_groq_llm(prompt: str) -> str:
 async def call_gemini_llm(prompt: str) -> str:
     """Fallback: Gemini Flash for the query."""
     try:
-        import google.generativeai as genai
+        import google.generativeai as genai  # type: ignore  # pyright: ignore[reportMissingImports]
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel(
             "gemini-2.0-flash",
             generation_config={"response_mime_type": "application/json", "temperature": 0.3},
-            system_instruction=(
-                "You are Sarwagya, an elite geospatial intelligence analyst. "
-                "Analyse country relationships, economic sectors, trade dependencies, "
-                "geopolitical events, and strategic risks with precision. "
-                "Respond ONLY with a JSON object: "
-                "{answer: string, key_points: string[], countries_involved: string[], "
-                "sectors_affected: string[], confidence: 'HIGH'|'MEDIUM'|'LOW', "
-                "query_type: 'COUNTRY_RELATIONS'|'ECONOMIC'|'MILITARY'|'TRADE'|'ENERGY'|'DIPLOMATIC'|'GENERAL'}"
-            ),
+            system_instruction=CHART_SYSTEM_PROMPT,
         )
         response = model.generate_content(prompt)
         return response.text
@@ -182,10 +207,7 @@ async def intelligence_search(
 ):
     """
     Natural language intelligence query endpoint.
-    Accepts questions like:
-     - "What is the relationship between India and Russia in the energy sector?"
-     - "How do US tariffs on China affect the semiconductor supply chain?"
-     - "Which countries are most exposed to the South China Sea conflict?"
+    Returns structured analysis + chart data + factual data points.
     """
     if not body.query or len(body.query.strip()) < 5:
         raise HTTPException(400, "Query too short")
@@ -193,7 +215,7 @@ async def intelligence_search(
         raise HTTPException(400, "Query too long (max 500 chars)")
 
     redis = get_redis()
-    cache_key = "intel_search:" + hashlib.md5(
+    cache_key = "intel_search_v2:" + hashlib.md5(
         f"{body.query.lower().strip()}{json.dumps(body.context_countries or [])}".encode()
     ).hexdigest()
 
@@ -242,26 +264,66 @@ async def intelligence_search(
     except Exception:
         raise HTTPException(500, "Failed to parse intelligence analysis")
 
-    # ── Find relevant seed events for response ─────────────────────────────
+    # ── Enrich with structured data ────────────────────────────────────────
     involved_isos = parsed.get("countries_involved", [])
+
     relevant_events = [
         e for e in events
         if any(c in involved_isos for c in (e.get("countries_involved") or []))
     ][:4]
 
+    # Build country profiles for involved nations
+    country_profiles = []
+    for iso3 in involved_isos[:6]:
+        if iso3 in COUNTRY_CONTEXT:
+            c = COUNTRY_CONTEXT[iso3]
+            country_profiles.append({
+                "iso3":        iso3,
+                "name":        c["name"],
+                "gdp_usd_tn":  c["gdp_usd_tn"],
+                "key_sectors": c["key_sectors"],
+                "alliances":   c["alliances"],
+            })
+
+    # Severity breakdown of relevant events
+    severity_breakdown = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for e in relevant_events:
+        sev = e.get("severity", 0)
+        if sev >= 0.8:   severity_breakdown["CRITICAL"] += 1
+        elif sev >= 0.6: severity_breakdown["HIGH"] += 1
+        elif sev >= 0.4: severity_breakdown["MEDIUM"] += 1
+        else:            severity_breakdown["LOW"] += 1
+
+    # Validate/clean chart_data from LLM
+    raw_charts = parsed.get("chart_data", [])
+    chart_data = []
+    for chart in raw_charts[:3]:
+        if isinstance(chart, dict) and chart.get("labels") and chart.get("datasets"):
+            chart_data.append(chart)
+
+    # Validate data_points
+    raw_dp = parsed.get("data_points", [])
+    data_points = [dp for dp in raw_dp if isinstance(dp, dict) and dp.get("label")][:6]
+
     response = {
-        "query": body.query,
-        "answer": parsed.get("answer", "Analysis unavailable."),
-        "key_points": parsed.get("key_points", []),
-        "relevant_events": relevant_events,
+        "query":              body.query,
+        "answer":             parsed.get("answer", "Analysis unavailable."),
+        "key_points":         parsed.get("key_points", []),
+        "relevant_events":    relevant_events,
         "countries_involved": involved_isos,
-        "sectors_affected": parsed.get("sectors_affected", []),
-        "confidence": parsed.get("confidence", "MEDIUM"),
-        "sources": ["Sarwagya Neo4j Knowledge Graph", "GDELT Events", "World Bank Data", "Groq LLaMA-3.3-70B"],
-        "query_type": parsed.get("query_type", "GENERAL"),
-        "generated_at": datetime.utcnow().isoformat(),
+        "sectors_affected":   parsed.get("sectors_affected", []),
+        "confidence":         parsed.get("confidence", "MEDIUM"),
+        "sources":            ["Sarwagya Knowledge Graph", "World Bank", "IEA", "UN Comtrade", "Groq LLaMA-3.3-70B"],
+        "query_type":         parsed.get("query_type", "GENERAL"),
+        "generated_at":       datetime.utcnow().isoformat(),
+        "chart_data":         chart_data,
+        "data_points":        data_points,
+        "country_profiles":   country_profiles,
+        "severity_breakdown": severity_breakdown,
     }
 
     # Cache for 30 minutes
     await redis.setex(cache_key, 1800, json.dumps(response))
     return response
+
+
