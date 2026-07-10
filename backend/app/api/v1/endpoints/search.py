@@ -13,6 +13,9 @@ from app.core.config import settings
 import json
 import hashlib
 import logging
+import asyncio
+import urllib.parse
+import httpx
 from datetime import datetime
 
 router = APIRouter()
@@ -86,10 +89,111 @@ class IntelQueryResponse(BaseModel):
     severity_breakdown: Dict[str, int]       # NEW: event severity counts
 
 
-def build_context(query: str, events: List[Dict], focus_countries: Optional[List[str]] = None) -> str:
-    """Build a rich context string from available data to ground the LLM."""
-    # Filter events relevant to the query
+def extract_search_keywords(query: str) -> str:
+    """Extract 3-4 clean keywords from raw query to feed to search API."""
+    q = query.lower()
+    for phrase in [
+        "what is the relationship between", "what is the relation between",
+        "how does", "how do", "affect", "implications of", "what are the",
+        "analyse", "analyze", "in the", "sector", "relationship between",
+        "relation between", "sectors", "dependencies", "geopolitical"
+    ]:
+        q = q.replace(phrase, "")
+    for char in ["?", "!", ".", ",", "-", "_", "(", ")", "\""]:
+        q = q.replace(char, " ")
+    words = [w.strip() for w in q.split() if len(w.strip()) > 2]
+    return " ".join(words[:4]) if words else query
+
+
+async def scrape_live_news(query: str) -> List[Dict[str, Any]]:
+    """Scrapes live geopolitical news from GDELT Doc API and NewsAPI concurrently."""
+    keywords = extract_search_keywords(query)
+    encoded_kw = urllib.parse.quote(keywords)
+    results = []
+
+    # Concurrent fetch list
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        # 1. GDELT Doc 2.0 API (Free, live geopolitical news Feed)
+        gdelt_url = f"https://api.gdeltproject.org/api/v2/doc/doc?query={encoded_kw}&mode=artlist&format=json&maxrecords=6"
+        gdelt_task = None
+        try:
+            gdelt_task = client.get(gdelt_url)
+        except Exception as e:
+            logger.warning(f"GDELT request preparation failed: {e}")
+
+        # 2. NewsAPI (Optional, if key configured)
+        newsapi_task = None
+        if settings.NEWS_API_KEY:
+            news_url = f"https://newsapi.org/v2/everything?q={encoded_kw}&sortBy=relevance&pageSize=5&apiKey={settings.NEWS_API_KEY}"
+            try:
+                newsapi_task = client.get(news_url)
+            except Exception as e:
+                logger.warning(f"NewsAPI request preparation failed: {e}")
+
+        # Run concurrently
+        try:
+            if gdelt_task and newsapi_task:
+                gdelt_res, news_res = await asyncio.gather(gdelt_task, newsapi_task, return_exceptions=True)
+            elif gdelt_task:
+                gdelt_res = await gdelt_task
+                news_res = None
+            else:
+                gdelt_res = None
+                news_res = None
+
+            # Process GDELT
+            if gdelt_res and not isinstance(gdelt_res, Exception) and gdelt_res.status_code == 200:
+                try:
+                    data = gdelt_res.json()
+                    articles = data.get("articles", [])
+                    for a in articles[:4]:
+                        results.append({
+                            "title":       a.get("title", "Untitled Event"),
+                            "summary":     f"Published on {a.get('domain', 'Web')} ({a.get('seendate', '')[:10]}). Language: {a.get('language')}.",
+                            "url":         a.get("url", ""),
+                            "source":      a.get("domain", "GDELT"),
+                            "published_at": a.get("seendate", "")[:10],
+                        })
+                except Exception as ex:
+                    logger.warning(f"Failed to parse GDELT json: {ex}")
+
+            # Process NewsAPI
+            if news_res and not isinstance(news_res, Exception) and news_res.status_code == 200:
+                try:
+                    data = news_res.json()
+                    articles = data.get("articles", [])
+                    for a in articles[:4]:
+                        results.append({
+                            "title":       a.get("title", "Geopolitical Development"),
+                            "summary":     a.get("description", "") or a.get("content", "")[:200],
+                            "url":         a.get("url", ""),
+                            "source":      a.get("source", {}).get("name", "NewsAPI"),
+                            "published_at": a.get("publishedAt", "")[:10],
+                        })
+                except Exception as ex:
+                    logger.warning(f"Failed to parse NewsAPI json: {ex}")
+
+        except Exception as e:
+            logger.error(f"Concurrent news fetch encountered error: {e}")
+
+    # Remove duplicates by URL or title
+    seen = set()
+    unique_results = []
+    for r in results:
+        uid = r["url"] or r["title"]
+        if uid not in seen:
+            seen.add(uid)
+            unique_results.append(r)
+
+    # If completely empty, return seed indicator
+    return unique_results[:6]
+
+
+def build_context(query: str, events: List[Dict], scraped_news: List[Dict], focus_countries: Optional[List[str]] = None) -> str:
+    """Build a rich context string including local graph events + live scraped web news."""
     q_lower = query.lower()
+    
+    # Filter local graph events
     relevant_events = [
         e for e in events
         if any(
@@ -99,9 +203,9 @@ def build_context(query: str, events: List[Dict], focus_countries: Optional[List
             + (e.get("affected_sectors") or [])
             + [(e.get("event_type") or "").lower()]
         )
-    ] or events[:5]  # fallback: top 5 by severity
+    ] or events[:4]
 
-    # Build country context for countries mentioned
+    # Build country context
     mentioned_countries = []
     if focus_countries:
         mentioned_countries = focus_countries
@@ -117,13 +221,21 @@ def build_context(query: str, events: List[Dict], focus_countries: Optional[List
             c = COUNTRY_CONTEXT[iso3]
             country_ctx += f"\n- {c['name']} ({iso3}): GDP ${c['gdp_usd_tn']}T, Key sectors: {', '.join(c['key_sectors'])}, Alliances: {', '.join(c['alliances'])}"
 
-    events_ctx = "\n".join([
-        f"- [{e['event_type']}] {e['title']} (severity {e['severity']:.0%}): {e['summary']}"
-        for e in relevant_events[:6]
+    local_ctx = "\n".join([
+        f"- [{e['event_type']}] {e['title']}: {e['summary']}"
+        for e in relevant_events[:5]
     ])
 
-    return f"""CURRENT GEOPOLITICAL EVENTS:
-{events_ctx}
+    news_ctx = "\n".join([
+        f"- [Live News: {n['source']}] {n['title']} ({n['published_at']}): {n['summary']} (Source URL: {n['url']})"
+        for n in scraped_news
+    ]) if scraped_news else "(No live web news matching query keywords found)"
+
+    return f"""LOCAL KNOWLEDGE GRAPH EVENTS:
+{local_ctx}
+
+LIVE WEB NEWS & INTELLIGENCE SEARCH:
+{news_ctx}
 
 COUNTRY PROFILES:{country_ctx if country_ctx else " (general global context)"}
 
@@ -133,11 +245,12 @@ USER QUERY: {query}"""
 CHART_SYSTEM_PROMPT = """
 You are Sarwagya, an elite geospatial intelligence analyst.
 Analyse country relationships, economic sectors, trade dependencies, geopolitical events, and strategic risks.
-Ground your answers in the provided event data and country profiles.
+Ground your answers in BOTH the local knowledge graph events AND the live web news results provided.
+Incorporate real-time facts, figures, and sources from the live news.
 
 Respond ONLY with a single JSON object with these EXACT keys:
-- answer (string, 2-3 paragraphs of analytical prose)
-- key_points (array of 3-5 short bullet strings)
+- answer (string, 2-3 paragraphs of analytical prose referencing both graph history and live news)
+- key_points (array of 3-5 short bullet strings containing specific factual updates)
 - countries_involved (array of ISO3 codes, e.g. ["USA","CHN"])
 - sectors_affected (array of sector name strings)
 - confidence ("HIGH" | "MEDIUM" | "LOW")
@@ -145,19 +258,14 @@ Respond ONLY with a single JSON object with these EXACT keys:
 - data_points: array of factual figures supporting your answer, each with:
     { "label": string, "value": string, "unit": string, "source": string }
     Example: {"label":"India crude imports from Russia","value":"40","unit":"%","source":"IEA 2024"}
-  Include 3-6 real, specific data points relevant to the query.
+  Include 3-6 real, specific data points cited in the live news or country database.
 - chart_data: array of 1-3 chart objects. Each chart has:
     { "type": "bar"|"line"|"radar"|"comparison",
       "title": string,
       "labels": [string],
       "datasets": [{"label": string, "values": [number], "color": "#hexcolor"}],
       "unit": string }
-  Generate charts that genuinely illustrate the answer — e.g.:
-  - A bar chart of countries' energy import dependency percentages
-  - A line chart of trade volume trend (3-5 years of estimated data)
-  - A radar chart of a country's geopolitical exposure across sectors
-  - A comparison table of GDP / military spend for involved nations
-  Use realistic estimated values grounded in public knowledge.
+  Generate charts illustrating the answer (e.g. trade volumes, market shares, resource dependencies).
 """
 
 
@@ -183,7 +291,7 @@ async def call_groq_llm(prompt: str) -> str:
 
 
 async def call_gemini_llm(prompt: str) -> str:
-    """Fallback: Gemini Flash for the query."""
+    """Fallback: Gemini Flash for the query with native Search tool enabled."""
     try:
         import google.generativeai as genai  # type: ignore  # pyright: ignore[reportMissingImports]
         genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -191,6 +299,8 @@ async def call_gemini_llm(prompt: str) -> str:
             "gemini-2.0-flash",
             generation_config={"response_mime_type": "application/json", "temperature": 0.3},
             system_instruction=CHART_SYSTEM_PROMPT,
+            # Enable native Google Search grounding tool inside Gemini
+            tools="google_search"
         )
         response = model.generate_content(prompt)
         return response.text
@@ -243,8 +353,11 @@ async def intelligence_search(
         logger.warning(f"Neo4j fetch failed, using seed data: {e}")
         events = SEED_EVENTS
 
+    # ── Fetch live news scraped from Google/GDELT/NewsAPI ──────────────────
+    scraped_news = await scrape_live_news(body.query)
+
     # ── Build LLM prompt ───────────────────────────────────────────────────
-    context = build_context(body.query, events, body.context_countries)
+    context = build_context(body.query, events, scraped_news, body.context_countries)
 
     # ── Call LLM (Groq primary, Gemini fallback) ───────────────────────────
     raw_json = None
@@ -305,6 +418,11 @@ async def intelligence_search(
     raw_dp = parsed.get("data_points", [])
     data_points = [dp for dp in raw_dp if isinstance(dp, dict) and dp.get("label")][:6]
 
+    # Dynamically extract search source names for citation
+    scraped_sources = list(set([n["source"] for n in scraped_news if n.get("source")]))
+    base_sources = ["Sarwagya Knowledge Graph", "World Bank", "IEA", "UN Comtrade"]
+    final_sources = base_sources + scraped_sources + ["Groq LLaMA-3.3-70B"]
+
     response = {
         "query":              body.query,
         "answer":             parsed.get("answer", "Analysis unavailable."),
@@ -313,7 +431,7 @@ async def intelligence_search(
         "countries_involved": involved_isos,
         "sectors_affected":   parsed.get("sectors_affected", []),
         "confidence":         parsed.get("confidence", "MEDIUM"),
-        "sources":            ["Sarwagya Knowledge Graph", "World Bank", "IEA", "UN Comtrade", "Groq LLaMA-3.3-70B"],
+        "sources":            final_sources,
         "query_type":         parsed.get("query_type", "GENERAL"),
         "generated_at":       datetime.utcnow().isoformat(),
         "chart_data":         chart_data,

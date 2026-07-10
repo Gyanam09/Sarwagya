@@ -70,6 +70,409 @@ function useTypewriter(text: string, speed = 12) {
   return displayed;
 }
 
+/* ─── SVG Bar Chart ──────────────────────────────────────────────────────── */
+function SvgBarChart({
+  title, labels, datasets, unit,
+}: {
+  title: string;
+  labels: string[];
+  datasets: Array<{ label: string; values: number[]; color?: string }>;
+  unit?: string;
+}) {
+  const W = 320, H = 140, PAD = { top: 18, right: 8, bottom: 36, left: 38 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+  const allVals = datasets.flatMap((d) => d.values);
+  const maxVal  = Math.max(...allVals, 1);
+  const barGroupW = chartW / labels.length;
+  const barW = Math.min(18, (barGroupW / datasets.length) - 3);
+  const COLORS = ["#38bdf8", "#34d399", "#fbbf24", "#fb923c", "#a78bfa"];
+
+  return (
+    <div>
+      <p style={{ fontSize: 9, color: "rgba(148,163,184,0.6)", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 4 }}>
+        {title.toUpperCase()}
+      </p>
+      <svg width={W} height={H} style={{ overflow: "visible", maxWidth: "100%" }}>
+        {/* Grid lines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+          const y = PAD.top + chartH * (1 - t);
+          return (
+            <g key={t}>
+              <line x1={PAD.left} y1={y} x2={PAD.left + chartW} y2={y}
+                stroke="rgba(30,48,75,0.6)" strokeWidth={0.5} />
+              <text x={PAD.left - 4} y={y + 3} textAnchor="end"
+                fill="rgba(100,116,139,0.7)" fontSize={7}>
+                {Math.round(maxVal * t)}{unit && t === 1 ? unit : ""}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Bars */}
+        {labels.map((lbl, li) => {
+          const groupX = PAD.left + li * barGroupW;
+          return (
+            <g key={li}>
+              {datasets.map((ds, di) => {
+                const val = ds.values[li] ?? 0;
+                const barH = (val / maxVal) * chartH;
+                const x = groupX + (barGroupW - datasets.length * (barW + 2)) / 2 + di * (barW + 2);
+                const y = PAD.top + chartH - barH;
+                const col = ds.color ?? COLORS[di % COLORS.length];
+                return (
+                  <g key={di}>
+                    <rect x={x} y={y} width={barW} height={barH}
+                      fill={col} opacity={0.8} rx={2} />
+                    {/* Value label on top */}
+                    {barH > 14 && (
+                      <text x={x + barW / 2} y={y + 10} textAnchor="middle"
+                        fill="rgba(255,255,255,0.7)" fontSize={6.5} fontWeight={700}>
+                        {val.toLocaleString()}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              {/* X-axis label */}
+              <text
+                x={groupX + barGroupW / 2}
+                y={PAD.top + chartH + 12}
+                textAnchor="middle"
+                fill="rgba(100,116,139,0.8)"
+                fontSize={7}
+                style={{ maxWidth: `${barGroupW - 2}px` }}
+              >
+                {lbl.length > 8 ? lbl.slice(0, 7) + "…" : lbl}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        {datasets.length > 1 && datasets.map((ds, di) => (
+          <g key={di} transform={`translate(${PAD.left + di * 80}, ${H - 6})`}>
+            <rect width={8} height={5} rx={1} fill={ds.color ?? COLORS[di % COLORS.length]} opacity={0.8} />
+            <text x={11} y={5} fill="rgba(100,116,139,0.7)" fontSize={7}>{ds.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+/* ─── SVG Line Chart ─────────────────────────────────────────────────────── */
+function SvgLineChart({
+  title, labels, datasets, unit,
+}: {
+  title: string;
+  labels: string[];
+  datasets: Array<{ label: string; values: number[]; color?: string }>;
+  unit?: string;
+}) {
+  const W = 320, H = 130, PAD = { top: 18, right: 8, bottom: 32, left: 38 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+  const allVals = datasets.flatMap((d) => d.values);
+  const maxVal  = Math.max(...allVals, 1);
+  const minVal  = Math.min(...allVals, 0);
+  const range   = maxVal - minVal || 1;
+  const COLORS  = ["#38bdf8", "#34d399", "#fbbf24", "#fb923c"];
+
+  const toX = (i: number) => PAD.left + (i / Math.max(labels.length - 1, 1)) * chartW;
+  const toY = (v: number) => PAD.top + chartH - ((v - minVal) / range) * chartH;
+
+  return (
+    <div>
+      <p style={{ fontSize: 9, color: "rgba(148,163,184,0.6)", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 4 }}>
+        {title.toUpperCase()}
+      </p>
+      <svg width={W} height={H} style={{ overflow: "visible", maxWidth: "100%" }}>
+        {/* Grid */}
+        {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+          const y = PAD.top + chartH * (1 - t);
+          const v = minVal + range * t;
+          return (
+            <g key={t}>
+              <line x1={PAD.left} y1={y} x2={PAD.left + chartW} y2={y}
+                stroke="rgba(30,48,75,0.6)" strokeWidth={0.5} />
+              <text x={PAD.left - 4} y={y + 3} textAnchor="end"
+                fill="rgba(100,116,139,0.7)" fontSize={7}>
+                {Math.round(v)}{unit && t === 1 ? unit : ""}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* X labels */}
+        {labels.map((lbl, i) => (
+          <text key={i} x={toX(i)} y={PAD.top + chartH + 12}
+            textAnchor="middle" fill="rgba(100,116,139,0.8)" fontSize={7}>
+            {lbl.length > 6 ? lbl.slice(0, 5) + "…" : lbl}
+          </text>
+        ))}
+
+        {/* Lines + dots */}
+        {datasets.map((ds, di) => {
+          const col = ds.color ?? COLORS[di % COLORS.length];
+          const pts = ds.values.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
+          const areaBottom = PAD.top + chartH;
+          const areaFirst  = `${toX(0)},${areaBottom}`;
+          const areaLast   = `${toX(ds.values.length - 1)},${areaBottom}`;
+          return (
+            <g key={di}>
+              {/* Area fill */}
+              <polygon points={`${areaFirst} ${pts} ${areaLast}`}
+                fill={col} opacity={0.07} />
+              {/* Line */}
+              <polyline points={pts} fill="none" stroke={col} strokeWidth={1.5}
+                strokeLinejoin="round" opacity={0.9} />
+              {/* Dots */}
+              {ds.values.map((v, i) => (
+                <circle key={i} cx={toX(i)} cy={toY(v)} r={2.5}
+                  fill={col} stroke="rgba(4,10,20,1)" strokeWidth={1.5} />
+              ))}
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        {datasets.length > 1 && datasets.map((ds, di) => (
+          <g key={di} transform={`translate(${PAD.left + di * 90}, ${H - 5})`}>
+            <line x1={0} y1={3} x2={10} y2={3}
+              stroke={ds.color ?? COLORS[di % COLORS.length]} strokeWidth={1.5} />
+            <text x={13} y={6} fill="rgba(100,116,139,0.7)" fontSize={7}>{ds.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+/* ─── SVG Radar Chart ────────────────────────────────────────────────────── */
+function SvgRadarChart({
+  title, labels, datasets,
+}: {
+  title: string;
+  labels: string[];
+  datasets: Array<{ label: string; values: number[]; color?: string }>;
+}) {
+  const SIZE = 140, CX = SIZE / 2, CY = SIZE / 2, R = 52;
+  const n = labels.length;
+  const angle = (i: number) => (i / n) * 2 * Math.PI - Math.PI / 2;
+  const COLORS = ["#38bdf8", "#34d399"];
+
+  const gridLevels = [0.25, 0.5, 0.75, 1];
+  const maxVal = 100; // treat values as 0-100
+
+  const toXY = (i: number, val: number) => ({
+    x: CX + R * (val / maxVal) * Math.cos(angle(i)),
+    y: CY + R * (val / maxVal) * Math.sin(angle(i)),
+  });
+
+  return (
+    <div>
+      <p style={{ fontSize: 9, color: "rgba(148,163,184,0.6)", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 4 }}>
+        {title.toUpperCase()}
+      </p>
+      <svg width={SIZE} height={SIZE} style={{ overflow: "visible" }}>
+        {/* Grid polygons */}
+        {gridLevels.map((t) => {
+          const pts = labels.map((_, i) => {
+            const x = CX + R * t * Math.cos(angle(i));
+            const y = CY + R * t * Math.sin(angle(i));
+            return `${x},${y}`;
+          }).join(" ");
+          return <polygon key={t} points={pts} fill="none"
+            stroke="rgba(30,48,75,0.7)" strokeWidth={0.5} />;
+        })}
+
+        {/* Spokes */}
+        {labels.map((lbl, i) => {
+          const ex = CX + (R + 10) * Math.cos(angle(i));
+          const ey = CY + (R + 10) * Math.sin(angle(i));
+          return (
+            <g key={i}>
+              <line x1={CX} y1={CY} x2={ex} y2={ey}
+                stroke="rgba(30,48,75,0.5)" strokeWidth={0.5} />
+              <text x={CX + (R + 18) * Math.cos(angle(i))}
+                y={CY + (R + 18) * Math.sin(angle(i)) + 3}
+                textAnchor="middle" fill="rgba(100,116,139,0.8)" fontSize={6.5}>
+                {lbl.length > 9 ? lbl.slice(0, 8) + "…" : lbl}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Datasets */}
+        {datasets.map((ds, di) => {
+          const col = ds.color ?? COLORS[di % COLORS.length];
+          const pts = ds.values.map((v, i) => {
+            const {x, y} = toXY(i, Math.min(v, maxVal));
+            return `${x},${y}`;
+          }).join(" ");
+          return (
+            <g key={di}>
+              <polygon points={pts} fill={col} fillOpacity={0.12}
+                stroke={col} strokeWidth={1.2} />
+              {ds.values.map((v, i) => {
+                const {x, y} = toXY(i, Math.min(v, maxVal));
+                return <circle key={i} cx={x} cy={y} r={2.5}
+                  fill={col} stroke="rgba(4,10,20,1)" strokeWidth={1} />;
+              })}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+/* ─── Data Points Grid ───────────────────────────────────────────────────── */
+function DataPointsGrid({
+  dataPoints, color,
+}: {
+  dataPoints: Array<{ label: string; value: string; unit: string; source: string }>;
+  color: string;
+}) {
+  if (!dataPoints?.length) return null;
+  return (
+    <div>
+      <p style={{ fontSize: 9, color: color, fontWeight: 800, letterSpacing: "0.1em", marginBottom: 8 }}>
+        FACTUAL DATA POINTS
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 6 }}>
+        {dataPoints.map((dp, i) => (
+          <div key={i} style={{
+            background: "rgba(6,12,24,0.9)",
+            border: `1px solid ${color}22`,
+            borderRadius: 8,
+            padding: "8px 10px",
+          }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: color, fontFamily: "JetBrains Mono, monospace", lineHeight: 1 }}>
+              {dp.value}<span style={{ fontSize: 10, opacity: 0.7 }}>{dp.unit}</span>
+            </div>
+            <div style={{ fontSize: 9.5, color: "#94a3b8", marginTop: 4, lineHeight: 1.3 }}>{dp.label}</div>
+            <div style={{ fontSize: 7.5, color: "rgba(71,85,105,0.7)", marginTop: 3 }}>src: {dp.source}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Country Profiles Panel ─────────────────────────────────────────────── */
+function CountryProfilesPanel({
+  profiles,
+}: {
+  profiles: Array<{ iso3: string; name: string; gdp_usd_tn: number; key_sectors: string[]; alliances: string[] }>;
+}) {
+  if (!profiles?.length) return null;
+  const maxGdp = Math.max(...profiles.map((p) => p.gdp_usd_tn), 1);
+  return (
+    <div>
+      <p style={{ fontSize: 9, color: "rgba(100,116,139,0.7)", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 8 }}>
+        COUNTRY PROFILES
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 6 }}>
+        {profiles.map((p) => (
+          <div key={p.iso3} style={{
+            background: "rgba(6,12,24,0.9)",
+            border: "1px solid rgba(20,35,60,0.7)",
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}>
+            <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+              <span style={{
+                fontFamily: "JetBrains Mono, monospace", fontSize: 11, fontWeight: 900,
+                color: "#38bdf8", background: "rgba(56,189,248,0.1)",
+                border: "1px solid rgba(56,189,248,0.2)", padding: "1px 6px", borderRadius: 4,
+              }}>{p.iso3}</span>
+              <span style={{ fontSize: 10.5, color: "#cbd5e1", fontWeight: 600 }}>{p.name}</span>
+            </div>
+            {/* GDP bar */}
+            <div style={{ marginBottom: 6 }}>
+              <div className="flex justify-between" style={{ marginBottom: 3 }}>
+                <span style={{ fontSize: 8, color: "rgba(100,116,139,0.6)" }}>GDP</span>
+                <span style={{ fontSize: 8, color: "#94a3b8", fontWeight: 700 }}>${p.gdp_usd_tn}T</span>
+              </div>
+              <div style={{ height: 4, background: "rgba(20,35,60,0.8)", borderRadius: 2 }}>
+                <div style={{
+                  height: "100%", borderRadius: 2,
+                  width: `${(p.gdp_usd_tn / maxGdp) * 100}%`,
+                  background: "linear-gradient(to right, #38bdf8, #6366f1)",
+                }} />
+              </div>
+            </div>
+            {/* Sectors */}
+            <div className="flex flex-wrap gap-1">
+              {p.key_sectors.slice(0, 3).map((s) => (
+                <span key={s} style={{
+                  fontSize: 7, color: "#fb923c", background: "rgba(251,146,60,0.08)",
+                  border: "1px solid rgba(251,146,60,0.15)", padding: "1px 5px", borderRadius: 3,
+                }}>{s}</span>
+              ))}
+            </div>
+            {/* Alliances */}
+            <div className="flex flex-wrap gap-1" style={{ marginTop: 4 }}>
+              {p.alliances.slice(0, 3).map((a) => (
+                <span key={a} style={{
+                  fontSize: 7, color: "rgba(100,116,139,0.7)",
+                  border: "1px solid rgba(30,48,75,0.6)", padding: "1px 4px", borderRadius: 3,
+                }}>{a}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Charts Section ─────────────────────────────────────────────────────── */
+function ChartsSection({
+  chartData, color,
+}: {
+  chartData: Array<{ type: string; title: string; labels: string[]; datasets: Array<{ label: string; values: number[]; color?: string }>; unit?: string }>;
+  color: string;
+}) {
+  if (!chartData?.length) return null;
+  return (
+    <div>
+      <p style={{ fontSize: 9, color: color, fontWeight: 800, letterSpacing: "0.1em", marginBottom: 10 }}>
+        SUPPORTING ANALYSIS CHARTS
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
+        {chartData.map((chart, i) => (
+          <div key={i} style={{
+            background: "rgba(6,12,24,0.9)",
+            border: "1px solid rgba(20,35,60,0.7)",
+            borderRadius: 8,
+            padding: "12px 14px",
+          }}>
+            {chart.type === "bar" && (
+              <SvgBarChart title={chart.title} labels={chart.labels}
+                datasets={chart.datasets} unit={chart.unit} />
+            )}
+            {chart.type === "line" && (
+              <SvgLineChart title={chart.title} labels={chart.labels}
+                datasets={chart.datasets} unit={chart.unit} />
+            )}
+            {chart.type === "radar" && (
+              <SvgRadarChart title={chart.title} labels={chart.labels}
+                datasets={chart.datasets} />
+            )}
+            {chart.type === "comparison" && (
+              <SvgBarChart title={chart.title} labels={chart.labels}
+                datasets={chart.datasets} unit={chart.unit} />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Result Card ────────────────────────────────────────────────────────── */
 function IntelResultCard({ result, query }: { result: IntelResult; query: string }) {
   const [expanded, setExpanded] = useState(true);
@@ -77,6 +480,7 @@ function IntelResultCard({ result, query }: { result: IntelResult; query: string
   const typedAnswer = useTypewriter(result.answer, 8);
   const qType = QUERY_TYPE_CONFIG[result.query_type] ?? QUERY_TYPE_CONFIG.GENERAL;
   const conf  = CONFIDENCE_CONFIG[result.confidence] ?? CONFIDENCE_CONFIG.MEDIUM;
+
 
   const handleCopy = () => {
     navigator.clipboard.writeText(
@@ -243,6 +647,15 @@ function IntelResultCard({ result, query }: { result: IntelResult; query: string
               </div>
             </div>
           )}
+
+          {/* Data Points — factual numeric figures */}
+          <DataPointsGrid dataPoints={result.data_points ?? []} color={qType.color} />
+
+          {/* Charts */}
+          <ChartsSection chartData={result.chart_data ?? []} color={qType.color} />
+
+          {/* Country Profiles */}
+          <CountryProfilesPanel profiles={result.country_profiles ?? []} />
 
           {/* Sources */}
           <div className="flex items-center gap-2 flex-wrap pt-1" style={{ borderTop: "1px solid rgba(16,28,52,0.7)" }}>

@@ -187,6 +187,27 @@ class ApiClient {
       sources: string[];
       query_type: string;
       generated_at: string;
+      chart_data: Array<{
+        type: "bar" | "line" | "radar" | "comparison";
+        title: string;
+        labels: string[];
+        datasets: Array<{ label: string; values: number[]; color?: string }>;
+        unit?: string;
+      }>;
+      data_points: Array<{
+        label: string;
+        value: string;
+        unit: string;
+        source: string;
+      }>;
+      country_profiles: Array<{
+        iso3: string;
+        name: string;
+        gdp_usd_tn: number;
+        key_sectors: string[];
+        alliances: string[];
+      }>;
+      severity_breakdown: Record<"CRITICAL" | "HIGH" | "MEDIUM" | "LOW", number>;
     };
   }
 }
