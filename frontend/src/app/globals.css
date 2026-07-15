@@ -363,3 +363,53 @@ html, body {
   box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
   animation: threatPulse 1.5s ease-in-out infinite;
 }
+
+/* ─── Fade-in animation (used by expandable panels, dropdowns) ──────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.2s ease-out forwards;
+}
+
+/* ─── Shimmer skeleton loading ──────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, rgba(20,32,55,0.8) 25%, rgba(35,55,90,0.6) 50%, rgba(20,32,55,0.8) 75%);
+  background-size: 200% auto;
+  animation: shimmer 1.5s linear infinite;
+}
+
+/* ─── Hex grid background (graph page) ──────────────────────────────────── */
+.hex-grid-bg {
+  background-color: #020408;
+  background-image:
+    radial-gradient(circle at 20% 50%, rgba(56,189,248,0.025) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(99,102,241,0.025) 0%, transparent 50%);
+}
+
+/* ─── Mobile panel overrides ─────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Entity detail panel goes full-screen on mobile */
+  .entity-detail-panel {
+    width: 100% !important;
+    right: 0 !important;
+    border-left: none !important;
+    border-top: 1px solid rgba(30,48,75,0.7) !important;
+  }
+
+  /* Bottom HUD is more compact — hide coordinate display */
+  .hud-coordinates {
+    display: none !important;
+  }
+
+  /* Bottom HUD shorter on mobile */
+  .bottom-hud {
+    height: 28px !important;
+    font-size: 9px !important;
+  }
+}

@@ -112,6 +112,34 @@ async def me(current_user: TokenData = Depends(get_current_user)):
     }
 
 
+class UpdateProfileRequest(BaseModel):
+    name: str | None = None
+    password: str | None = None
+
+
+@router.patch("/me")
+async def update_me(
+    body: UpdateProfileRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
+    """Update display name or password for current user via Supabase Auth."""
+    update_payload: dict = {}
+    if body.name:
+        update_payload["data"] = {"name": body.name}
+    if body.password:
+        update_payload["password"] = body.password
+
+    if not update_payload:
+        raise HTTPException(400, "Nothing to update")
+
+    try:
+        supabase.auth.admin.update_user_by_id(current_user.user_id, update_payload)
+    except Exception as e:
+        raise HTTPException(400, f"Update failed: {str(e)}")
+
+    return {"message": "Profile updated", "user_id": current_user.user_id}
+
+
 @router.post("/logout")
 async def logout(current_user: TokenData = Depends(get_current_user)):
     """Logout — client should discard tokens."""

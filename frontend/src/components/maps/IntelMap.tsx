@@ -23,6 +23,7 @@ import type { PickingInfo, MapViewState } from "@deck.gl/core";
 import type { Aircraft } from "@/hooks/useAircraft";
 import type { SatellitePosition } from "@/hooks/useSatellites";
 import type { Vessel } from "@/hooks/useShips";
+import { useSettingsStore } from "@/store/settingsStore";
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 export interface GeoEvent {
@@ -363,11 +364,15 @@ export default function IntelMap({
   onMapHover,
   onViewStateChange,
 }: IntelMapProps) {
+  const savedStyle = useSettingsStore((s) => s.mapStyle);
   const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
   const [animTime, setAnimTime] = useState(0);
-  const [mapStyle, setMapStyle] = useState<MapStyle>("dark");
+  const [mapStyle, setMapStyle] = useState<MapStyle>(savedStyle ?? "dark");
   const deckRef = useRef<any>(null);
+
+  // Sync map style whenever the user changes it in settings
+  useEffect(() => { setMapStyle(savedStyle ?? "dark"); }, [savedStyle]);
 
   // Current zoom level — used for zoom-aware dot visibility
   const zoom = viewState.zoom ?? 2;

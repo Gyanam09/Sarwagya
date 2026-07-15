@@ -125,10 +125,7 @@ class ApiClient {
     return res.data;
   }
 
-  async getEvents(params?: { event_type?: string; min_severity?: number; country?: string; limit?: number }) {
-    const res = await this.client.get("/events", { params });
-    return res.data;
-  }
+  // getEvents — see below (paginated version with search/sort support)
 
   async getTrendingEvents(hours = 24) {
     const res = await this.client.get("/events/trending/now", { params: { hours } });
@@ -210,6 +207,57 @@ class ApiClient {
       severity_breakdown: Record<"CRITICAL" | "HIGH" | "MEDIUM" | "LOW", number>;
     };
   }
+
+  async getCountryIndicators(iso3: string, years = 10) {
+    const res = await this.client.get(`/countries/${iso3}/indicators`, { params: { years } });
+    return res.data;
+  }
+
+  async getTradePartners(iso3: string, topN = 10) {
+    const res = await this.client.get(`/countries/${iso3}/trade-partners`, { params: { top_n: topN } });
+    return res.data;
+  }
+
+  async getEvents(params?: {
+    event_type?: string;
+    min_severity?: number;
+    country?: string;
+    search?: string;
+    sort_by?: string;
+    page?: number;
+    page_size?: number;
+    from_date?: string;
+    to_date?: string;
+  }) {
+    const res = await this.client.get("/events", { params });
+    return res.data as { events: any[]; total: number; page: number; page_size: number };
+  }
+
+  async getGlobalGraph() {
+    const res = await this.client.get("/graph/global");
+    return res.data as { nodes: Array<{ iso3: string; name: string; region: string }>; edges: Array<{ from: string; to: string; type: string }> };
+  }
+
+  async updateProfile(body: { name?: string; password?: string }) {
+    const res = await this.client.patch("/auth/me", body);
+    return res.data;
+  }
+
+  async triggerPipeline(dagId: string) {
+    const res = await this.client.post(`/pipeline/trigger/${dagId}`);
+    return res.data as { dag_id: string; run_id: string; state: string };
+  }
+
+  async getPipelineRuns(dagId = "sarwagya_daily_pipeline") {
+    const res = await this.client.get("/pipeline/runs", { params: { dag_id: dagId } });
+    return res.data as { dag_id: string; runs: any[]; note?: string };
+  }
+
+  async getPipelineStatus(dagId: string, runId?: string) {
+    const res = await this.client.get(`/pipeline/status/${dagId}`, { params: runId ? { run_id: runId } : {} });
+    return res.data;
+  }
 }
 
 export const api = new ApiClient();
+

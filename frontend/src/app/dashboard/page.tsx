@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -9,6 +9,7 @@ import {
   Clock, Target, Layers, Activity, Loader2,
   Shield, MapPin, Wind, Navigation, Info, Eye, EyeOff,
   Thermometer, Crosshair, BarChart3, Filter, Search, Cpu,
+  Network, Settings, CalendarDays, User, LogOut,
 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { api } from "@/lib/api";
@@ -18,6 +19,7 @@ import { useShips } from "@/hooks/useShips";
 import type { GeoEvent, LayerVisibility, MapHoverState } from "@/components/maps/IntelMap";
 import { ThreatGauge } from "@/components/dashboard/ThreatGauge";
 import { IntelQueryTerminal } from "@/components/dashboard/IntelQueryTerminal";
+import { useSettingsStore } from "@/store/settingsStore";
 
 /* ─── Dynamic import (map is client/WebGL only) ────────────────────────── */
 const IntelMap = dynamic(() => import("@/components/maps/IntelMap"), {
@@ -298,7 +300,7 @@ function EntityDetailPanel({ entity, type, onClose }: { entity: any; type: strin
 }
 
 /* ─── Layer Toggle ──────────────────────────────────────────────────────── */
-function LayerToggle({ label, icon, count, active, color, onClick }: {
+const LayerToggle = memo(function LayerToggle({ label, icon, count, active, color, onClick }: {
   label: string; icon: React.ReactNode; count: number; active: boolean; color: string; onClick: () => void;
 }) {
   return (
@@ -312,20 +314,21 @@ function LayerToggle({ label, icon, count, active, color, onClick }: {
       }}
     >
       <span style={{ color: active ? color : "#475569" }}>{icon}</span>
-      <span className="hidden sm:inline">{label}</span>
+      <span className="hidden lg:inline">{label}</span>
       <span className="font-mono-data px-1 py-0.5 rounded text-[9px] font-bold"
         style={{ background: active ? `${color}20` : "rgba(15,25,45,0.8)", color: active ? color : "#334155" }}>
         {count.toLocaleString()}
       </span>
     </button>
   );
-}
+});
 
 /* ─── Intel Event Row ───────────────────────────────────────────────────── */
-function IntelEventRow({ event, onClick }: { event: GeoEvent; onClick: () => void }) {
+const IntelEventRow = memo(function IntelEventRow({ event, onClick }: { event: GeoEvent; onClick: () => void }) {
   const sk  = sevKey(event.severity);
   const sev = SEV_STYLE[sk];
   const [hovered, setHovered] = useState(false);
+  const router = useRouter();
 
   return (
     <button
@@ -358,6 +361,13 @@ function IntelEventRow({ event, onClick }: { event: GeoEvent; onClick: () => voi
             <span style={{ fontSize: 8.5, color: "rgba(100,116,139,0.7)" }}>
               {event.event_type?.replace(/_/g, " ")}
             </span>
+            {event.countries?.slice(0, 2).map((c) => (
+              <button key={c} onClick={(e) => { e.stopPropagation(); router.push(`/country/${c}`); }}
+                style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, letterSpacing: "0.06em" }}
+                className="hover:underline">
+                {c}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -366,10 +376,10 @@ function IntelEventRow({ event, onClick }: { event: GeoEvent; onClick: () => voi
       </div>
     </button>
   );
-}
+});
 
 /* ─── Stat Card ─────────────────────────────────────────────────────────── */
-function StatCard({ icon, label, value, color, loading, sub }: {
+const StatCard = memo(function StatCard({ icon, label, value, color, loading, sub }: {
   icon: React.ReactNode; label: string; value: string; color: string; loading: boolean; sub?: string;
 }) {
   return (
@@ -397,7 +407,7 @@ function StatCard({ icon, label, value, color, loading, sub }: {
       {sub && <p style={{ fontSize: 8, color: "rgba(100,116,139,0.5)", marginTop: 3 }}>{sub}</p>}
     </div>
   );
-}
+});
 
 /* ─── Bottom HUD Bar ────────────────────────────────────────────────────── */
 function BottomHUD({
@@ -470,15 +480,15 @@ function BottomHUD({
 export default function DashboardPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, loadUser, logout } = useAuthStore();
-  const [sidebarOpen, setSidebarOpen]         = useState(true);
+  const settingsStore = useSettingsStore();
+  const [sidebarOpen, setSidebarOpen]         = useState(settingsStore.sidebarDefaultOpen);
   const [selectedEntity, setSelectedEntity]   = useState<{ data: any; type: string } | null>(null);
   const [feedExpanded, setFeedExpanded]       = useState(true);
   const [hoverCoords, setHoverCoords]         = useState<{ longitude: number; latitude: number } | null>(null);
   const [terminalOpen, setTerminalOpen]       = useState(false);
+  const [userMenuOpen, setUserMenuOpen]       = useState(false);
 
-  const [layerVis, setLayerVis] = useState<LayerVisibility>({
-    aircraft: true, ships: true, satellites: true, events: true, heatmap: false, threats: true,
-  });
+  const [layerVis, setLayerVis] = useState<LayerVisibility>(settingsStore.defaultLayers);
 
   useEffect(() => { loadUser(); }, [loadUser]);
   useEffect(() => {
@@ -620,29 +630,79 @@ export default function DashboardPage() {
         </div>
 
         {/* Right controls */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {criticalCount > 0 && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold animate-threat-pulse"
               style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171" }}>
               <AlertCircle className="w-3 h-3" />
-              {criticalCount} CRITICAL
+              <span className="hidden sm:inline">{criticalCount} CRITICAL</span>
+              <span className="sm:hidden">{criticalCount}</span>
             </div>
           )}
-          <div className="flex items-center gap-1.5">
+          <div className="hidden sm:flex items-center gap-1.5">
             <span className="status-dot live" />
             <span style={{ fontSize: 9, color: "#34d399", fontWeight: 700, letterSpacing: "0.08em" }}>LIVE</span>
           </div>
-          {/* User avatar */}
-          <div
-            className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold cursor-pointer"
-            style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)", boxShadow: "0 0 12px rgba(99,102,241,0.4)" }}
-            title={user?.email}
-            onClick={() => { logout(); router.push("/auth/login"); }}
-          >
-            {user?.email?.[0]?.toUpperCase() ?? "U"}
+
+          {/* Nav links */}
+          <div className="hidden md:flex items-center gap-1">
+            {[{label:"EVENTS",href:"/events",icon:<CalendarDays className="w-3 h-3"/>},
+              {label:"GRAPH",href:"/graph",icon:<Network className="w-3 h-3"/>}].map(({label,href,icon})=>(
+              <button key={label} onClick={()=>router.push(href)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all"
+                style={{background:"rgba(8,16,30,0.7)",border:"1px solid rgba(30,48,75,0.6)",color:"rgba(100,116,139,0.7)"}}>
+                {icon}{label}
+              </button>
+            ))}
+          </div>
+
+          {/* User avatar + dropdown */}
+          <div className="relative">
+            <button
+              className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
+              style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)", boxShadow: "0 0 12px rgba(99,102,241,0.4)" }}
+              title={user?.email}
+              onClick={() => setUserMenuOpen((o) => !o)}
+            >
+              {user?.email?.[0]?.toUpperCase() ?? "U"}
+            </button>
+            {userMenuOpen && (
+              <div className="absolute right-0 top-9 rounded-xl overflow-hidden z-50 min-w-[160px] animate-fade-in-up"
+                style={{ background: "rgba(2,6,14,0.97)", border: "1px solid rgba(30,48,75,0.7)", backdropFilter: "blur(20px)", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}>
+                <div className="px-3 py-2" style={{ borderBottom: "1px solid rgba(20,35,60,0.6)" }}>
+                  <p style={{ fontSize: 10, color: "rgba(100,116,139,0.6)" }}>{user?.email}</p>
+                  <p style={{ fontSize: 9, color: "#38bdf8", fontWeight: 700, letterSpacing: "0.06em" }}>{user?.role?.toUpperCase()}</p>
+                </div>
+                {[{label:"Events",href:"/events",icon:<CalendarDays className="w-3 h-3"/>},
+                  {label:"Network Graph",href:"/graph",icon:<Network className="w-3 h-3"/>},
+                  {label:"Settings",href:"/settings",icon:<Settings className="w-3 h-3"/>}].map(({label,href,icon})=>(
+                  <button key={label} onClick={()=>{setUserMenuOpen(false);router.push(href);}}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-slate-800/40"
+                    style={{fontSize:12,color:"rgba(148,163,184,0.8)"}}>
+                    <span style={{color:"rgba(56,189,248,0.6)"}}>{icon}</span>{label}
+                  </button>
+                ))}
+                <div style={{ borderTop: "1px solid rgba(20,35,60,0.6)" }}>
+                  <button onClick={async()=>{setUserMenuOpen(false);await logout();router.push("/auth/login");}}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-red-950/20"
+                    style={{fontSize:12,color:"rgba(248,113,113,0.8)"}}>
+                    <LogOut className="w-3 h-3"/>Sign out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
+
+      {/* ── Mobile overlay (tap to close sidebar) ─────────────────── */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-10 sm:hidden"
+          style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* ── Left Sidebar ─────────────────────────────────────────────── */}
       <aside

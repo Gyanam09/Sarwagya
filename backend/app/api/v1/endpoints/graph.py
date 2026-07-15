@@ -53,6 +53,86 @@ async def get_country_network(
     }
 
 
+@router.get("/global")
+async def get_global_graph(
+    neo4j=Depends(get_neo4j_session),
+    _: TokenData = Depends(check_rate_limit),
+):
+    """
+    Return all country nodes + relationship edges for the global force-directed graph.
+    Falls back to static seed data when Neo4j is empty.
+    """
+    # Seed graph data for pre-pipeline state
+    SEED_NODES = [
+        {"iso3": "USA", "name": "United States", "region": "Americas"},
+        {"iso3": "CHN", "name": "China", "region": "Asia"},
+        {"iso3": "RUS", "name": "Russia", "region": "Europe"},
+        {"iso3": "IND", "name": "India", "region": "Asia"},
+        {"iso3": "DEU", "name": "Germany", "region": "Europe"},
+        {"iso3": "GBR", "name": "United Kingdom", "region": "Europe"},
+        {"iso3": "FRA", "name": "France", "region": "Europe"},
+        {"iso3": "JPN", "name": "Japan", "region": "Asia"},
+        {"iso3": "SAU", "name": "Saudi Arabia", "region": "Middle East"},
+        {"iso3": "IRN", "name": "Iran", "region": "Middle East"},
+        {"iso3": "TWN", "name": "Taiwan", "region": "Asia"},
+        {"iso3": "KOR", "name": "South Korea", "region": "Asia"},
+        {"iso3": "BRA", "name": "Brazil", "region": "Americas"},
+        {"iso3": "AUS", "name": "Australia", "region": "Oceania"},
+        {"iso3": "PAK", "name": "Pakistan", "region": "Asia"},
+        {"iso3": "TUR", "name": "Turkey", "region": "Europe"},
+        {"iso3": "ARE", "name": "UAE", "region": "Middle East"},
+        {"iso3": "ISR", "name": "Israel", "region": "Middle East"},
+        {"iso3": "UKR", "name": "Ukraine", "region": "Europe"},
+        {"iso3": "PHL", "name": "Philippines", "region": "Asia"},
+    ]
+    SEED_EDGES = [
+        {"from": "USA", "to": "CHN", "type": "TRADES_WITH"},
+        {"from": "USA", "to": "GBR", "type": "ALLY_OF"},
+        {"from": "USA", "to": "JPN", "type": "ALLY_OF"},
+        {"from": "USA", "to": "KOR", "type": "ALLY_OF"},
+        {"from": "USA", "to": "AUS", "type": "ALLY_OF"},
+        {"from": "USA", "to": "IRN", "type": "SANCTIONS"},
+        {"from": "USA", "to": "RUS", "type": "SANCTIONS"},
+        {"from": "CHN", "to": "RUS", "type": "TRADES_WITH"},
+        {"from": "CHN", "to": "TWN", "type": "CONFLICT_WITH"},
+        {"from": "CHN", "to": "IND", "type": "CONFLICT_WITH"},
+        {"from": "RUS", "to": "UKR", "type": "CONFLICT_WITH"},
+        {"from": "RUS", "to": "IND", "type": "TRADES_WITH"},
+        {"from": "IND", "to": "PAK", "type": "CONFLICT_WITH"},
+        {"from": "SAU", "to": "IRN", "type": "CONFLICT_WITH"},
+        {"from": "SAU", "to": "USA", "type": "TRADES_WITH"},
+        {"from": "ISR", "to": "IRN", "type": "CONFLICT_WITH"},
+        {"from": "DEU", "to": "RUS", "type": "TRADES_WITH"},
+        {"from": "JPN", "to": "CHN", "type": "TRADES_WITH"},
+        {"from": "TWN", "to": "USA", "type": "TRADES_WITH"},
+        {"from": "PHL", "to": "CHN", "type": "CONFLICT_WITH"},
+    ]
+
+    node_query = """
+    MATCH (c:Country)
+    RETURN c.iso3 AS iso3, c.name AS name, c.region AS region
+    LIMIT 200
+    """
+    edge_query = """
+    MATCH (a:Country)-[r]->(b:Country)
+    RETURN a.iso3 AS from, type(r) AS type, b.iso3 AS to
+    LIMIT 1000
+    """
+    try:
+        node_result = await neo4j.run(node_query)
+        nodes = await node_result.data()
+        edge_result = await neo4j.run(edge_query)
+        edges = await edge_result.data()
+    except Exception:
+        nodes, edges = [], []
+
+    if not nodes:
+        nodes = SEED_NODES
+        edges = SEED_EDGES
+
+    return {"nodes": nodes, "edges": edges}
+
+
 @router.get("/stats")
 async def graph_stats(
     neo4j=Depends(get_neo4j_session),

@@ -37,19 +37,25 @@ class EventOut(BaseModel):
     countries_involved: List[str] = []
 
 
-@router.get("/", response_model=List[EventOut])
+@router.get("/")
 async def list_events(
     event_type: Optional[str] = Query(None),
     min_severity: float = Query(0.0, ge=0.0, le=1.0),
     country: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, description="Full-text search on title/summary"),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
-    limit: int = Query(50, le=200),
+    sort_by: str = Query("date", description="Sort field: date | severity"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
     neo4j=Depends(get_neo4j_session),
     _: TokenData = Depends(check_rate_limit),
 ):
+    """List events with search, filters, and pagination."""
+    skip = (page - 1) * page_size
     conditions = ["e.severity >= $min_severity"]
-    params: dict = {"min_severity": min_severity, "limit": limit}
+    params: dict = {"min_severity": min_severity, "skip": skip, "page_size": page_size}
+
     if event_type:
         conditions.append("e.event_type = $event_type")
         params["event_type"] = event_type.upper()
@@ -59,9 +65,20 @@ async def list_events(
     if to_date:
         conditions.append("e.date <= date($to_date)")
         params["to_date"] = str(to_date)
+    if search:
+        conditions.append("(toLower(e.title) CONTAINS toLower($search) OR toLower(e.summary) CONTAINS toLower($search))")
+        params["search"] = search
+
     where_clause = " AND ".join(conditions)
+    order_clause = "e.severity DESC" if sort_by == "severity" else "e.date DESC, e.severity DESC"
+
     if country:
-        query = f"""
+        params["country"] = country.upper()
+        count_q = f"""
+        MATCH (c:Country {{iso3: $country}})-[:INVOLVED_IN]->(e:Event)
+        WHERE {where_clause} RETURN count(e) AS total
+        """
+        data_q = f"""
         MATCH (c:Country {{iso3: $country}})-[:INVOLVED_IN]->(e:Event)
         WHERE {where_clause}
         OPTIONAL MATCH (other:Country)-[:INVOLVED_IN]->(e)
@@ -69,22 +86,47 @@ async def list_events(
                e.severity AS severity, e.summary AS summary, e.source_url AS source_url,
                toString(e.date) AS date, e.affected_sectors AS affected_sectors,
                collect(DISTINCT other.iso3) AS countries_involved
-        ORDER BY e.date DESC, e.severity DESC LIMIT $limit
+        ORDER BY {order_clause} SKIP $skip LIMIT $page_size
         """
-        params["country"] = country.upper()
     else:
-        query = f"""
+        count_q = f"""
+        MATCH (e:Event) WHERE {where_clause} RETURN count(e) AS total
+        """
+        data_q = f"""
         MATCH (e:Event) WHERE {where_clause}
         OPTIONAL MATCH (c:Country)-[:INVOLVED_IN]->(e)
         RETURN e.event_id AS event_id, e.title AS title, e.event_type AS event_type,
                e.severity AS severity, e.summary AS summary, e.source_url AS source_url,
                toString(e.date) AS date, e.affected_sectors AS affected_sectors,
                collect(DISTINCT c.iso3) AS countries_involved
-        ORDER BY e.date DESC, e.severity DESC LIMIT $limit
+        ORDER BY {order_clause} SKIP $skip LIMIT $page_size
         """
-    result = await neo4j.run(query, params)
-    records = await result.data()
-    return records if records else [e for e in SEED_EVENTS if e["severity"] >= min_severity][:limit]
+
+    try:
+        cnt_result = await neo4j.run(count_q, params)
+        cnt_records = await cnt_result.data()
+        total = cnt_records[0]["total"] if cnt_records else 0
+
+        result = await neo4j.run(data_q, params)
+        records = await result.data()
+    except Exception:
+        records = []
+        total = 0
+
+    if not records:
+        # Fallback to seed events
+        seed = [e for e in SEED_EVENTS if e["severity"] >= min_severity]
+        if search:
+            q = search.lower()
+            seed = [e for e in seed if q in e["title"].lower() or q in (e.get("summary") or "").lower()]
+        if event_type:
+            seed = [e for e in seed if e["event_type"] == event_type.upper()]
+        if sort_by == "severity":
+            seed.sort(key=lambda e: e["severity"], reverse=True)
+        total = len(seed)
+        records = seed[skip: skip + page_size]
+
+    return {"events": records, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/{event_id}", response_model=EventOut)
