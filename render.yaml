@@ -1,0 +1,15 @@
+﻿services:
+  - type: web
+    name: sarwagya-backend
+    env: python
+    region: singapore
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python -m spacy download en_core_web_sm
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: "*"
