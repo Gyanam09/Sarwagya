@@ -99,6 +99,7 @@ def get_neo4j_driver():
             settings.NEO4J_URI,
             auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
             max_connection_pool_size=10,   # free tier limit
+            connection_timeout=3.0,
         )
     return _neo4j_driver
 
@@ -175,27 +176,42 @@ async def connect_all():
 
     # Test PostgreSQL via raw asyncpg (bypasses SQLAlchemy dialect init which
     # uses prepared statements incompatible with PgBouncer transaction pooling).
-    conn = await asyncpg.connect(_DSN, statement_cache_size=0)
     try:
-        await conn.fetchval("SELECT 1")
-        logger.info("PostgreSQL OK")
-    finally:
-        await conn.close()
+        conn = await asyncpg.connect(_DSN, statement_cache_size=0)
+        try:
+            await conn.fetchval("SELECT 1")
+            logger.info("PostgreSQL OK")
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(
+            f"PostgreSQL unavailable (project may be paused): {e}\n"
+            "Auth/DB routes will fail until Postgres is reachable."
+        )
 
     # Test Neo4j
-    driver = get_neo4j_driver()
-    async with driver.session() as s:
-        await s.run("RETURN 1")
-    logger.info("Neo4j OK")
+    try:
+        driver = get_neo4j_driver()
+        async with driver.session() as s:
+            await s.run("RETURN 1")
+        logger.info("Neo4j OK")
+    except Exception as e:
+        logger.warning(f"Neo4j unavailable: {e}. Graph routes will return empty/seed data.")
 
     # Test Redis
-    r = get_redis()
-    await r.ping()
-    logger.info("Redis OK")
+    try:
+        r = get_redis()
+        await r.ping()
+        logger.info("Redis OK")
+    except Exception as e:
+        logger.warning(f"Redis unavailable: {e}. Caching disabled.")
 
     # Init Qdrant
-    await init_qdrant_collections()
-    logger.info("Qdrant OK")
+    try:
+        await init_qdrant_collections()
+        logger.info("Qdrant OK")
+    except Exception as e:
+        logger.warning(f"Qdrant unavailable: {e}. Vector search disabled.")
 
 
 async def disconnect_all():

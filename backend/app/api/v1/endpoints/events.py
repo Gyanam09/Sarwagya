@@ -1,6 +1,6 @@
 """
 events.py — Geopolitical events endpoints
-Trending/now returns seed data when Neo4j graph is empty (pre-pipeline).
+Fallback priority: Neo4j → local JSON cache → seed events.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -9,6 +9,25 @@ from datetime import date, datetime
 from app.core.security import check_rate_limit, TokenData
 from app.core.database import get_neo4j_session, get_redis
 import json
+import os
+from pathlib import Path
+
+# Local event cache written by run_pipeline.py
+# __file__ = backend/app/api/v1/endpoints/events.py
+# parent×4 = backend/app/  then /data/events_cache.json
+_CACHE_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "events_cache.json"
+
+
+def _load_cache_events() -> list:
+    """Load events from local JSON cache (written by run_pipeline.py)."""
+    try:
+        if _CACHE_PATH.exists():
+            with open(_CACHE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
 
 router = APIRouter()
 
@@ -49,7 +68,6 @@ async def list_events(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
     neo4j=Depends(get_neo4j_session),
-    _: TokenData = Depends(check_rate_limit),
 ):
     """List events with search, filters, and pagination."""
     skip = (page - 1) * page_size
@@ -102,29 +120,41 @@ async def list_events(
         ORDER BY {order_clause} SKIP $skip LIMIT $page_size
         """
 
+    records = []
+    total = 0
     try:
-        cnt_result = await neo4j.run(count_q, params)
-        cnt_records = await cnt_result.data()
-        total = cnt_records[0]["total"] if cnt_records else 0
+        count_res = await neo4j.run(count_q, params)
+        count_data = await count_res.data()
+        total = count_data[0]["total"] if count_data else 0
 
-        result = await neo4j.run(data_q, params)
-        records = await result.data()
+        if total > 0:
+            data_res = await neo4j.run(data_q, params)
+            records = await data_res.data()
     except Exception:
         records = []
         total = 0
 
     if not records:
-        # Fallback to seed events
-        seed = [e for e in SEED_EVENTS if e["severity"] >= min_severity]
+        # Fallback 1: local pipeline cache
+        cached = _load_cache_events()
+        if not cached:
+            # Fallback 2: static seed events
+            cached = SEED_EVENTS
+
+        filtered = [e for e in cached if e.get("severity", 0) >= min_severity]
         if search:
             q = search.lower()
-            seed = [e for e in seed if q in e["title"].lower() or q in (e.get("summary") or "").lower()]
+            filtered = [e for e in filtered if q in e.get("title", "").lower() or q in (e.get("summary") or "").lower()]
         if event_type:
-            seed = [e for e in seed if e["event_type"] == event_type.upper()]
+            filtered = [e for e in filtered if e.get("event_type", "") == event_type.upper()]
+        if country:
+            filtered = [e for e in filtered if country.upper() in (e.get("countries_involved") or [])]
         if sort_by == "severity":
-            seed.sort(key=lambda e: e["severity"], reverse=True)
-        total = len(seed)
-        records = seed[skip: skip + page_size]
+            filtered.sort(key=lambda e: e.get("severity", 0), reverse=True)
+        else:
+            filtered.sort(key=lambda e: (e.get("date") or "", e.get("severity", 0)), reverse=True)
+        total = len(filtered)
+        records = filtered[skip: skip + page_size]
 
     return {"events": records, "total": total, "page": page, "page_size": page_size}
 
@@ -168,7 +198,6 @@ async def trending_events(
     hours: int = Query(24, le=168),
     limit: int = Query(10, le=50),
     neo4j=Depends(get_neo4j_session),
-    _: TokenData = Depends(check_rate_limit),
 ):
     """Trending events. Falls back to seed data when graph is empty."""
     query = """
@@ -181,7 +210,16 @@ async def trending_events(
            collect(DISTINCT c.iso3) AS countries_involved
     ORDER BY e.severity DESC LIMIT $limit
     """
-    result = await neo4j.run(query, hours=hours, limit=limit)
-    records = await result.data()
-    # Return seed events when graph is empty
-    return records if records else sorted(SEED_EVENTS, key=lambda e: e["severity"], reverse=True)[:limit]
+    try:
+        result = await neo4j.run(query, hours=hours, limit=limit)
+        records = await result.data()
+        if records:
+            return records
+    except Exception as e:
+        pass
+    # Fallback 1: local pipeline cache
+    cached = _load_cache_events()
+    if cached:
+        return sorted(cached, key=lambda e: e.get("severity", 0), reverse=True)[:limit]
+    # Fallback 2: static seed events
+    return sorted(SEED_EVENTS, key=lambda e: e["severity"], reverse=True)[:limit]

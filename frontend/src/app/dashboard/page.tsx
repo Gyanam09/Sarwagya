@@ -735,7 +735,7 @@ export default function DashboardPage() {
           <StatCard icon={<Plane     className="w-3.5 h-3.5" />} label="Aircraft"   value={aircraft.length.toLocaleString()}   color="#38bdf8" loading={aircraftLoading} sub="live" />
           <StatCard icon={<Anchor    className="w-3.5 h-3.5" />} label="Vessels"    value={ships.length.toLocaleString()}       color="#fb923c" loading={false}           sub="routes" />
           <StatCard icon={<Satellite className="w-3.5 h-3.5" />} label="Satellites" value={satellites.length.toLocaleString()}  color="#a78bfa" loading={satLoading}      sub="orbital" />
-          <StatCard icon={<Zap       className="w-3.5 h-3.5" />} label="Events"     value={geoEvents.length.toLocaleString()}   color="#f43f5e" loading={false}           sub="intel" />
+          <StatCard icon={<Zap       className="w-3.5 h-3.5" />} label="Events"     value={(trending as any[]).length.toLocaleString()}   color="#f43f5e" loading={false}           sub="intel" />
         </div>
 
         {/* Intelligence Feed */}
@@ -868,7 +868,7 @@ export default function DashboardPage() {
         aircraft={aircraft.length}
         ships={ships.length}
         satellites={satellites.length}
-        events={geoEvents.length}
+        events={(trending as any[]).length}
         hoverCoords={hoverCoords}
       />
     </div>
