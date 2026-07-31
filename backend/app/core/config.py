@@ -9,19 +9,19 @@ class Settings(BaseSettings):
     # App
     APP_NAME: str = "Sarwagya"
     APP_ENV: str = "development"
-    SECRET_KEY: str
+    SECRET_KEY: str = "sarwagya-default-secret-key-change-in-prod"
     ALLOWED_ORIGINS: str = "http://localhost:3000"
 
     # Supabase
-    SUPABASE_URL: str
-    SUPABASE_ANON_KEY: str
-    SUPABASE_SERVICE_KEY: str
-    DATABASE_URL: str
+    SUPABASE_URL: str = "https://placeholder.supabase.co"
+    SUPABASE_ANON_KEY: str = "placeholder-anon-key"
+    SUPABASE_SERVICE_KEY: str = "placeholder-service-key"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sarwagya"
 
     # Neo4j
-    NEO4J_URI: str
+    NEO4J_URI: str = "neo4j+s://placeholder.databases.neo4j.io"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str
+    NEO4J_PASSWORD: str = "placeholder-password"
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str = ""
 
     # LLMs (free)
-    GROQ_API_KEY: str
+    GROQ_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
