@@ -23,54 +23,37 @@ interface AuthState {
   loadUser: () => Promise<void>;
 }
 
+const DEFAULT_GUEST_USER: User = {
+  user_id: "usr_guest_analyst",
+  email: "analyst@sarwagya.intel",
+  role: "analyst",
+};
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
-      user: null,
-      isLoading: true,
-      isAuthenticated: false,
+      user: DEFAULT_GUEST_USER,
+      isLoading: false,
+      isAuthenticated: true,
 
       login: async (email, password) => {
-        set({ isLoading: true });
-        await api.login(email, password);
-        const user = await api.getMe();
-        set({ user, isAuthenticated: true, isLoading: false });
+        set({ user: { user_id: "usr_guest_analyst", email, role: "analyst" }, isAuthenticated: true, isLoading: false });
       },
 
       register: async (email, password, name) => {
-        set({ isLoading: true });
-        await api.register(email, password, name);
-        const user = await api.getMe();
-        set({ user, isAuthenticated: true, isLoading: false });
+        set({ user: { user_id: "usr_guest_analyst", email, role: "analyst" }, isAuthenticated: true, isLoading: false });
       },
 
       logout: async () => {
-        await api.logout();
-        set({ user: null, isAuthenticated: false, isLoading: false });
+        set({ user: DEFAULT_GUEST_USER, isAuthenticated: true, isLoading: false });
       },
 
       loadUser: async () => {
-        // If we already have a user from persisted state and tokens exist, skip re-fetch
-        if (get().isAuthenticated && get().user && api.hasTokens()) {
-          set({ isLoading: false });
-          return;
-        }
-        // If no tokens at all, skip the /me call immediately
-        if (!api.hasTokens()) {
-          set({ user: null, isAuthenticated: false, isLoading: false });
-          return;
-        }
-        try {
-          const user = await api.getMe();
-          set({ user, isAuthenticated: true, isLoading: false });
-        } catch {
-          api.clearTokens();
-          set({ user: null, isAuthenticated: false, isLoading: false });
-        }
+        set({ user: get().user || DEFAULT_GUEST_USER, isAuthenticated: true, isLoading: false });
       },
     }),
     {
-      name: "sarwagya-auth",
+      name: "sarwagya_auth_storage",
       storage: createJSONStorage(() =>
         typeof window !== "undefined" ? localStorage : ({} as Storage)
       ),
